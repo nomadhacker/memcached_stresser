@@ -22,17 +22,19 @@ const (
 var letters = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 func main() {
-	flag.Parse()
-
-	ratio := flag.Float64("ratio in decimal form", 0.1, "ratio of writes/reads")
-	factor := flag.Int64("factor", 1000, "volumizing factor")
-	storeURIstring := flag.String("store", "localhost:9000,localhost:5000", "store host URIs separated by comma")
+	ratio := flag.Float64("ratio", 0.1, "ratio, in decimal form, of writes/reads")
+	factor := flag.Float64("factor", 1000, "volumizing factor")
+	storeURIstring := flag.String("store", "localhost:11211,localhost:5000", "store host URIs separated by comma")
 	startingRecordSize := flag.Int64("start", 10000, "starting record size")
 
-	numWrites := factor * ratio // writes is always lower
-	numReads := factor
+	flag.Parse()
 
-	startingData := getStartingData(startingRecordSize)
+	rand.Seed(time.Now().Unix())
+
+	numWrites := *factor * *ratio // writes is always lower
+	numReads := *factor
+
+	startingData := genStartingData(*startingRecordSize)
 
 	var wg sync.WaitGroup
 	var wg2 sync.WaitGroup
@@ -45,6 +47,7 @@ func main() {
 	reportSignal := make(chan struct{})
 	go func() {
 		wg2.Add(1)
+		fmt.Println("here")
 		globalStart := time.Now()
 		var writes []time.Duration
 		var reads []time.Duration
@@ -72,6 +75,7 @@ func main() {
 		fmt.Println("Average read time elapsed: %s", avgReadTime)
 		fmt.Println("Average read time std dev: %s", findStdDev(avgReadTime, floatReads))
 
+		fmt.Println("here2")
 		wg2.Done()
 	}()
 
@@ -92,13 +96,15 @@ func main() {
 		wg2.Done()
 	}()
 
-	mc := memcache.New(strings.Split(storeURIstring, ",")...)
+	mc := memcache.New(strings.Split(*storeURIstring, ",")...)
 	err := writeStartingData(mc, startingData)
+
 	if err != nil {
+		fmt.Println(err)
 		log.Fatal("Starting data failed to load")
 	}
 
-	for i := 0; i < numWrites; i++ {
+	for i := 0; float64(i) < numWrites; i++ {
 		go func() {
 			wg.Add(1)
 			newKey := randSeq(KEY_SIZE)
@@ -111,17 +117,18 @@ func main() {
 		}()
 	}
 
-	for i := 0; i < numReads; i++ {
+	for i := 0; float64(i) < numReads; i++ {
 		go func() {
 			wg.Add(1)
-			key := startingData[rand.Int()]
+			key := startingData[randomRange(0, len(startingData))]
 			timeTrack(readReportChan, errorChan, func() error {
 				result, err := mc.Get(key)
 				if err != nil {
 					return err
-				} else if result.Value != []byte("1") {
+				} else if string(result.Value) != "1" {
 					return errors.New("Get op returned a non \"1\" result")
 				}
+				return nil
 			})
 			wg.Done()
 		}()
@@ -130,6 +137,11 @@ func main() {
 	reportSignal <- struct{}{}
 	reportSignal <- struct{}{}
 	wg2.Done() // wait for our reporting to finish
+	fmt.Println("main exiting")
+}
+
+func randomRange(min, max int) int {
+	return rand.Intn(max-min) + min
 }
 
 func timeTrack(reportChan chan time.Duration, errorChan chan error, doFunc func() error) {
@@ -152,9 +164,10 @@ func randSeq(n int) string {
 	return string(b)
 }
 
-func loadStartingData(numRecords int64) []string {
+func genStartingData(numRecords int64) []string {
 	var testData []string
-	for i := 0; i < numRecords; i++ {
+	var i int64
+	for i = 0; i < numRecords; i++ {
 		testData = append(testData, randSeq(KEY_SIZE))
 	}
 	return testData
@@ -183,13 +196,13 @@ func findAverage(list []float64) float64 {
 	for _, dataPoint := range list {
 		total = total + dataPoint
 	}
-	return total / len(list)
+	return total / float64(len(list))
 }
 
 func findStdDev(average float64, list []float64) float64 {
 	var variances []float64
 	for _, dataPoint := range list {
-		variances = append(variances, math.Pow(datapoint-average, 2))
+		variances = append(variances, math.Pow(dataPoint-average, 2))
 	}
 	return findAverage(variances)
 }
