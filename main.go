@@ -46,50 +46,55 @@ func main() {
 	// reporting loop
 	reportSignal := make(chan struct{})
 
+	wg2.Add(1)
 	go func() {
-		wg2.Add(1)
 		globalStart := time.Now()
 		var writes []time.Duration
 		var reads []time.Duration
+	REPORTLOOP:
 		for {
 			select {
 			case <-reportSignal:
-				break
+				break REPORTLOOP
 			case metric := <-writeReportChan:
 				writes = append(writes, metric)
 			case metric := <-readReportChan:
 				reads = append(reads, metric)
 			}
 		}
+		fmt.Println("Starting report calculations")
 		globalDelta := time.Since(globalStart)
 
-		fmt.Println("Completed %s total writes in roughly %s", len(writes), globalDelta)
+		fmt.Printf("Completed %s total writes in roughly %s \n", len(writes), globalDelta)
 		floatWrites := durationToNanosecondsMap(writes)
 		avgWriteTime := findAverage(floatWrites)
-		fmt.Println("Average write time elapsed: %s", avgWriteTime)
-		fmt.Println("Average write time std dev: %s", findStdDev(avgWriteTime, floatWrites))
+		fmt.Printf("Average write time elapsed: %s ns \n", avgWriteTime)
+		fmt.Printf("Average write time std dev: %s ns \n", findStdDev(avgWriteTime, floatWrites))
 
-		fmt.Println("Completed %s total reads in roughly %s", len(reads), globalDelta)
+		fmt.Printf("Completed %s total reads in roughly %s \n", len(reads), globalDelta)
 		floatReads := durationToNanosecondsMap(reads)
 		avgReadTime := findAverage(floatReads)
-		fmt.Println("Average read time elapsed: %s", avgReadTime)
-		fmt.Println("Average read time std dev: %s", findStdDev(avgReadTime, floatReads))
+		fmt.Printf("Average read time elapsed: %s ns \n", avgReadTime)
+		fmt.Printf("Average read time std dev: %s ns \n", findStdDev(avgReadTime, floatReads))
 
 		wg2.Done()
 	}()
 
+	wg2.Add(1)
 	go func() {
-		wg2.Add(1)
 		var errors []error
+	ERRORLOOP:
 		for {
 			select {
 			case <-reportSignal:
-				break
+				fmt.Println("recieved report signal")
+				break ERRORLOOP
 			case err := <-errorChan:
 				fmt.Println(err.Error())
 				errors = append(errors, err)
 			}
 		}
+		fmt.Println("Starting error calculation")
 		errorCount := len(errors)
 		fmt.Println("Total Errors: " + strconv.Itoa(errorCount))
 		wg2.Done()
@@ -104,8 +109,8 @@ func main() {
 	}
 
 	for i := 0; float64(i) < numWrites; i++ {
+		wg.Add(1)
 		go func() {
-			wg.Add(1)
 			time.Sleep(time.Duration(randomRange(0, 30)) * time.Millisecond)
 			newKey := randSeq(KEY_SIZE)
 			item := &memcache.Item{Key: newKey, Value: []byte("1")}
@@ -118,8 +123,8 @@ func main() {
 	}
 
 	for i := 0; float64(i) < numReads; i++ {
+		wg.Add(1)
 		go func() {
-			wg.Add(1)
 			time.Sleep(time.Duration(randomRange(0, 30)) * time.Millisecond)
 			key := startingData[randomRange(0, len(startingData))]
 			timeTrack(readReportChan, errorChan, func() error {
@@ -135,9 +140,10 @@ func main() {
 		}()
 	}
 	wg.Wait() // wait for our reads/writes to finish
+	fmt.Println("starting reporting")
 	reportSignal <- struct{}{}
 	reportSignal <- struct{}{}
-	wg2.Done() // wait for our reporting to finish
+	wg2.Wait() // wait for our reporting to finish
 	fmt.Println("main exiting")
 }
 
