@@ -45,9 +45,9 @@ func main() {
 
 	// reporting loop
 	reportSignal := make(chan struct{})
+
 	go func() {
 		wg2.Add(1)
-		fmt.Println("here")
 		globalStart := time.Now()
 		var writes []time.Duration
 		var reads []time.Duration
@@ -75,7 +75,6 @@ func main() {
 		fmt.Println("Average read time elapsed: %s", avgReadTime)
 		fmt.Println("Average read time std dev: %s", findStdDev(avgReadTime, floatReads))
 
-		fmt.Println("here2")
 		wg2.Done()
 	}()
 
@@ -107,6 +106,7 @@ func main() {
 	for i := 0; float64(i) < numWrites; i++ {
 		go func() {
 			wg.Add(1)
+			time.Sleep(time.Duration(randomRange(0, 30)) * time.Millisecond)
 			newKey := randSeq(KEY_SIZE)
 			item := &memcache.Item{Key: newKey, Value: []byte("1")}
 			startingData = append(startingData, newKey)
@@ -120,6 +120,7 @@ func main() {
 	for i := 0; float64(i) < numReads; i++ {
 		go func() {
 			wg.Add(1)
+			time.Sleep(time.Duration(randomRange(0, 30)) * time.Millisecond)
 			key := startingData[randomRange(0, len(startingData))]
 			timeTrack(readReportChan, errorChan, func() error {
 				result, err := mc.Get(key)
