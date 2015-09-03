@@ -34,6 +34,8 @@ func main() {
 	numWrites := *factor * *ratio // writes is always lower
 	numReads := *factor
 
+	// we treat startingData like it's threadsafe (appending and reading in separate threads)
+	// we don't mind if we get a race condition that creates a "cache miss"
 	startingData := genStartingData(*startingRecordSize)
 
 	var wg sync.WaitGroup
@@ -62,20 +64,19 @@ func main() {
 				reads = append(reads, metric)
 			}
 		}
-		fmt.Println("Starting report calculations")
 		globalDelta := time.Since(globalStart)
 
-		fmt.Printf("Completed %s total writes in roughly %s \n", len(writes), globalDelta)
+		fmt.Printf("\n\n\nCompleted %d total writes in roughly %s \n", len(writes), globalDelta)
 		floatWrites := durationToNanosecondsMap(writes)
 		avgWriteTime := findAverage(floatWrites)
-		fmt.Printf("Average write time elapsed: %s ns \n", avgWriteTime)
-		fmt.Printf("Average write time std dev: %s ns \n", findStdDev(avgWriteTime, floatWrites))
+		fmt.Printf("Average write time elapsed: %g s \n", avgWriteTime)
+		fmt.Printf("Average write time std dev: %g s \n", findStdDev(avgWriteTime, floatWrites))
 
-		fmt.Printf("Completed %s total reads in roughly %s \n", len(reads), globalDelta)
+		fmt.Printf("Completed %d total reads in roughly %s \n", len(reads), globalDelta)
 		floatReads := durationToNanosecondsMap(reads)
 		avgReadTime := findAverage(floatReads)
-		fmt.Printf("Average read time elapsed: %s ns \n", avgReadTime)
-		fmt.Printf("Average read time std dev: %s ns \n", findStdDev(avgReadTime, floatReads))
+		fmt.Printf("Average read time elapsed: %g s \n", avgReadTime)
+		fmt.Printf("Average read time std dev: %g s \n", findStdDev(avgReadTime, floatReads))
 
 		wg2.Done()
 	}()
@@ -87,16 +88,14 @@ func main() {
 		for {
 			select {
 			case <-reportSignal:
-				fmt.Println("recieved report signal")
 				break ERRORLOOP
 			case err := <-errorChan:
 				fmt.Println(err.Error())
 				errors = append(errors, err)
 			}
 		}
-		fmt.Println("Starting error calculation")
 		errorCount := len(errors)
-		fmt.Println("Total Errors: " + strconv.Itoa(errorCount))
+		fmt.Println("\n\nTotal Errors: " + strconv.Itoa(errorCount))
 		wg2.Done()
 	}()
 
@@ -113,8 +112,8 @@ func main() {
 		go func() {
 			time.Sleep(time.Duration(randomRange(0, 30)) * time.Millisecond)
 			newKey := randSeq(KEY_SIZE)
-			item := &memcache.Item{Key: newKey, Value: []byte("1")}
 			startingData = append(startingData, newKey)
+			item := &memcache.Item{Key: newKey, Value: []byte("1")}
 			timeTrack(writeReportChan, errorChan, func() error {
 				return mc.Set(item)
 			})
@@ -140,11 +139,9 @@ func main() {
 		}()
 	}
 	wg.Wait() // wait for our reads/writes to finish
-	fmt.Println("starting reporting")
 	reportSignal <- struct{}{}
 	reportSignal <- struct{}{}
 	wg2.Wait() // wait for our reporting to finish
-	fmt.Println("main exiting")
 }
 
 func randomRange(min, max int) int {
@@ -193,7 +190,7 @@ func writeStartingData(mc *memcache.Client, data []string) error {
 func durationToNanosecondsMap(list []time.Duration) []float64 {
 	var result []float64
 	for _, val := range list {
-		result = append(result, float64(val.Nanoseconds()))
+		result = append(result, val.Seconds())
 	}
 	return result
 }
