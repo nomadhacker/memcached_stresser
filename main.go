@@ -34,8 +34,6 @@ func main() {
 	numWrites := *factor * *ratio // writes is always lower
 	numReads := *factor
 
-	// we treat startingData like it's threadsafe (appending and reading in separate threads)
-	// we don't mind if we get a race condition that creates a "cache miss"
 	startingData := genStartingData(*startingRecordSize)
 
 	var wg sync.WaitGroup
