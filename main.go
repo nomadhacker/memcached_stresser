@@ -111,9 +111,7 @@ func main() {
 		wg.Add(1)
 		go func() {
 			time.Sleep(time.Duration(randomRange(0, 30)) * time.Millisecond)
-			newKey := randSeq(KEY_SIZE)
-			startingData = append(startingData, newKey)
-			item := &memcache.Item{Key: newKey, Value: []byte("1")}
+			item := &memcache.Item{Key: randSeq(KEY_SIZE), Value: []byte("1")}
 			timeTrack(writeReportChan, errorChan, func() error {
 				return mc.Set(item)
 			})
