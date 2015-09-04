@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -123,13 +122,8 @@ func main() {
 			time.Sleep(time.Duration(randomRange(0, 30)) * time.Millisecond)
 			key := startingData[randomRange(0, len(startingData))]
 			timeTrack(readReportChan, errorChan, func() error {
-				result, err := mc.Get(key)
-				if err != nil {
-					return err
-				} else if string(result.Value) != "1" {
-					return errors.New("Get op returned a non \"1\" result")
-				}
-				return nil
+				_, err := mc.Get(key)
+				return err
 			})
 			wg.Done()
 		}()
