@@ -35,8 +35,9 @@ func main() {
 
 	startingData := genStartingData(*startingRecordSize)
 
-	var wg sync.WaitGroup
-	var wg2 sync.WaitGroup
+	var ioWG sync.WaitGroup
+	var reportingWG sync.WaitGroup
+	ioWG.Add(int(numReads + numWrites)) // set it here so we guarantee no race conditions
 
 	writeReportChan := make(chan time.Duration, 999)
 	readReportChan := make(chan time.Duration, 999)
@@ -45,7 +46,7 @@ func main() {
 	// reporting loop
 	reportSignal := make(chan struct{})
 
-	wg2.Add(1)
+	reportingWG.Add(1)
 	go func() {
 		globalStart := time.Now()
 		var writes []time.Duration
@@ -63,22 +64,32 @@ func main() {
 		}
 		globalDelta := time.Since(globalStart)
 
-		fmt.Printf("\n\n\nCompleted %d total writes in roughly %s \n", len(writes), globalDelta)
-		floatWrites := durationToNanosecondsMap(writes)
+		// drain channels
+		for i := 0; i < len(writeReportChan); i++ {
+			metric := <-writeReportChan
+			writes = append(writes, metric)
+		}
+		for i := 0; i < len(readReportChan); i++ {
+			metric := <-readReportChan
+			writes = append(reads, metric)
+		}
+
+		fmt.Printf("\nCompleted %d total writes in roughly %s \n", len(writes), globalDelta)
+		floatWrites := durationToMilliseconds(writes)
 		avgWriteTime := findAverage(floatWrites)
-		fmt.Printf("Average write time elapsed: %g s \n", avgWriteTime)
-		fmt.Printf("Average write time std dev: %g s \n", findStdDev(avgWriteTime, floatWrites))
+		fmt.Printf("Average write time elapsed: %g ms \n", avgWriteTime)
+		fmt.Printf("Average write time std dev: %g ms \n", findStdDev(avgWriteTime, floatWrites))
 
-		fmt.Printf("Completed %d total reads in roughly %s \n", len(reads), globalDelta)
-		floatReads := durationToNanosecondsMap(reads)
+		fmt.Printf("\nCompleted %d total reads in roughly %s \n", len(reads), globalDelta)
+		floatReads := durationToMilliseconds(reads)
 		avgReadTime := findAverage(floatReads)
-		fmt.Printf("Average read time elapsed: %g s \n", avgReadTime)
-		fmt.Printf("Average read time std dev: %g s \n", findStdDev(avgReadTime, floatReads))
+		fmt.Printf("Average read time elapsed: %g ms \n", avgReadTime)
+		fmt.Printf("Average read time std dev: %g ms \n", findStdDev(avgReadTime, floatReads))
 
-		wg2.Done()
+		reportingWG.Done()
 	}()
 
-	wg2.Add(1)
+	reportingWG.Add(1)
 	go func() {
 		var errors []error
 	ERRORLOOP:
@@ -87,13 +98,21 @@ func main() {
 			case <-reportSignal:
 				break ERRORLOOP
 			case err := <-errorChan:
-				fmt.Println(err.Error())
 				errors = append(errors, err)
 			}
 		}
+		// drain channel
+		for i := 0; i < len(errorChan); i++ {
+			err := <-errorChan
+			errors = append(errors, err)
+		}
 		errorCount := len(errors)
-		fmt.Println("\n\nTotal Errors: " + strconv.Itoa(errorCount))
-		wg2.Done()
+		fmt.Println("\nTotal Errors: " + strconv.Itoa(errorCount))
+		errorCounts := findMostCommonErrors(errors)
+		for key, value := range errorCounts {
+			fmt.Println("Error: \"" + key + "\" Count: " + strconv.Itoa(value))
+		}
+		reportingWG.Done()
 	}()
 
 	mc := memcache.New(strings.Split(*storeURIstring, ",")...)
@@ -105,19 +124,17 @@ func main() {
 	}
 
 	for i := 0; float64(i) < numWrites; i++ {
-		wg.Add(1)
 		go func() {
 			time.Sleep(time.Duration(randomRange(0, 30)) * time.Millisecond)
 			item := &memcache.Item{Key: randSeq(KEY_SIZE), Value: []byte("1")}
 			timeTrack(writeReportChan, errorChan, func() error {
 				return mc.Set(item)
 			})
-			wg.Done()
+			ioWG.Done()
 		}()
 	}
 
 	for i := 0; float64(i) < numReads; i++ {
-		wg.Add(1)
 		go func() {
 			time.Sleep(time.Duration(randomRange(0, 30)) * time.Millisecond)
 			key := startingData[randomRange(0, len(startingData))]
@@ -125,13 +142,22 @@ func main() {
 				_, err := mc.Get(key)
 				return err
 			})
-			wg.Done()
+			ioWG.Done()
 		}()
 	}
-	wg.Wait() // wait for our reads/writes to finish
+	ioWG.Wait() // wait for our reads/writes to finish
 	reportSignal <- struct{}{}
 	reportSignal <- struct{}{}
-	wg2.Wait() // wait for our reporting to finish
+	reportingWG.Wait() // wait for our reporting to finish
+}
+
+func findMostCommonErrors(list []error) map[string]int {
+	count := make(map[string]int)
+	for _, err := range list {
+		i, _ := count[err.Error()]
+		count[err.Error()] = i + 1
+	}
+	return count
 }
 
 func randomRange(min, max int) int {
@@ -177,10 +203,10 @@ func writeStartingData(mc *memcache.Client, data []string) error {
 	return nil
 }
 
-func durationToNanosecondsMap(list []time.Duration) []float64 {
+func durationToMilliseconds(list []time.Duration) []float64 {
 	var result []float64
 	for _, val := range list {
-		result = append(result, val.Seconds())
+		result = append(result, val.Seconds()*1000.0)
 	}
 	return result
 }
@@ -198,5 +224,5 @@ func findStdDev(average float64, list []float64) float64 {
 	for _, dataPoint := range list {
 		variances = append(variances, math.Pow(dataPoint-average, 2))
 	}
-	return findAverage(variances)
+	return math.Sqrt(findAverage(variances))
 }
