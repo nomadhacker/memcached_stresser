@@ -43,9 +43,10 @@ func main() {
 	readReportChan := make(chan time.Duration, 999)
 	errorChan := make(chan error, 999)
 
-	// reporting loop
 	reportSignal := make(chan struct{})
 
+	// Load starting data, report metrics on timing
+	// (essentially a sequential write benchmark)
 	mc := memcache.New(strings.Split(*storeURIstring, ",")...)
 	mc.Timeout = time.Second * 5
 	startingDataStart := time.Now()
@@ -60,6 +61,7 @@ func main() {
 	fmt.Println("Loaded " + strconv.Itoa(int(*startingRecordSize)) + " starting records in: ")
 	fmt.Println(startingDataElapsed)
 
+	// reporting loop
 	reportingWG.Add(1)
 	go func() {
 		globalStart := time.Now()
