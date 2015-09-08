@@ -46,6 +46,20 @@ func main() {
 	// reporting loop
 	reportSignal := make(chan struct{})
 
+	mc := memcache.New(strings.Split(*storeURIstring, ",")...)
+	mc.Timeout = time.Second * 5
+	startingDataStart := time.Now()
+	err := writeStartingData(mc, startingData)
+	startingDataElapsed := time.Since(startingDataStart)
+
+	if err != nil {
+		fmt.Println(err)
+		log.Fatal("Starting data failed to load")
+	}
+
+	fmt.Println("Loaded " + strconv.Itoa(int(*startingRecordSize)) + " starting records in: ")
+	fmt.Println(startingDataElapsed)
+
 	reportingWG.Add(1)
 	go func() {
 		globalStart := time.Now()
@@ -114,14 +128,6 @@ func main() {
 		}
 		reportingWG.Done()
 	}()
-
-	mc := memcache.New(strings.Split(*storeURIstring, ",")...)
-	err := writeStartingData(mc, startingData)
-
-	if err != nil {
-		fmt.Println(err)
-		log.Fatal("Starting data failed to load")
-	}
 
 	for i := 0; float64(i) < numWrites; i++ {
 		go func() {
