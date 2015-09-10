@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"hash/crc32"
 	"log"
 	"math"
 	"math/rand"
@@ -13,6 +14,26 @@ import (
 
 	"github.com/bradfitz/gomemcache/memcache"
 )
+
+type ShardedMemcached struct {
+	servers []*memcache.Client
+}
+
+func (sm *ShardedMemcached) Add(c *memcache.Client) {
+	sm.servers = append(sm.servers, c)
+}
+
+func (sm *ShardedMemcached) getShard(key string) *memcache.Client {
+	return sm.servers[crc32.ChecksumIEEE([]byte(key))%uint32(len(sm.servers))]
+}
+
+func (sm *ShardedMemcached) Set(i *memcache.Item) error {
+	return sm.getShard(i.Key).Set(i)
+}
+
+func (sm *ShardedMemcached) Get(key string) (*memcache.Item, error) {
+	return sm.getShard(key).Get(key)
+}
 
 const (
 	KEY_SIZE = 64
@@ -45,10 +66,17 @@ func main() {
 
 	reportSignal := make(chan struct{})
 
+	// Build sharded memcached struct
+	shards := strings.Split(*storeURIstring, ",")
+	mc := &ShardedMemcached{}
+	for _, each := range shards {
+		newClient := memcache.New(each)
+		newClient.Timeout = time.Second * 5
+		mc.Add(newClient)
+	}
+
 	// Load starting data, report metrics on timing
 	// (essentially a sequential write benchmark)
-	mc := memcache.New(strings.Split(*storeURIstring, ",")...)
-	mc.Timeout = time.Second * 5
 	startingDataStart := time.Now()
 	err := writeStartingData(mc, startingData)
 	startingDataElapsed := time.Since(startingDataStart)
@@ -95,12 +123,14 @@ func main() {
 		avgWriteTime := findAverage(floatWrites)
 		fmt.Printf("Average write time elapsed: %g ms \n", avgWriteTime)
 		fmt.Printf("Average write time std dev: %g ms \n", findStdDev(avgWriteTime, floatWrites))
+		// go buildHistogram(floatWrites, "write_histo")
 
 		fmt.Printf("\nCompleted %d total reads in roughly %s \n", len(reads), globalDelta)
 		floatReads := durationToMilliseconds(reads)
 		avgReadTime := findAverage(floatReads)
 		fmt.Printf("Average read time elapsed: %g ms \n", avgReadTime)
 		fmt.Printf("Average read time std dev: %g ms \n", findStdDev(avgReadTime, floatReads))
+		// go buildHistogram(floatReads, "read_histo")
 
 		reportingWG.Done()
 	}()
@@ -201,7 +231,7 @@ func genStartingData(numRecords int64) []string {
 	return testData
 }
 
-func writeStartingData(mc *memcache.Client, data []string) error {
+func writeStartingData(mc *ShardedMemcached, data []string) error {
 	for _, hash := range data {
 		err := mc.Set(&memcache.Item{Key: hash, Value: []byte("1")})
 		if err != nil {
