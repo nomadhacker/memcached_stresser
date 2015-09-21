@@ -15,6 +15,11 @@ import (
 	"github.com/bradfitz/gomemcache/memcache"
 )
 
+type WatchedErr struct {
+	err    error
+	opType int
+}
+
 type ShardedMemcached struct {
 	servers []*memcache.Client
 }
@@ -62,7 +67,7 @@ func main() {
 
 	writeReportChan := make(chan time.Duration, 999)
 	readReportChan := make(chan time.Duration, 999)
-	errorChan := make(chan error, 999)
+	errorChan := make(chan WatchedErr, 999)
 
 	reportSignal := make(chan struct{})
 
@@ -137,6 +142,8 @@ func main() {
 
 	reportingWG.Add(1)
 	go func() {
+		var writeErrorCount int
+		var readErrorCount int
 		var errors []error
 	ERRORLOOP:
 		for {
@@ -144,17 +151,27 @@ func main() {
 			case <-reportSignal:
 				break ERRORLOOP
 			case err := <-errorChan:
-				errors = append(errors, err)
+				if err.err != nil {
+					errors = append(errors, err.err)
+					if err.opType == 0 {
+						writeErrorCount = writeErrorCount + 1
+					} else {
+						readErrorCount = readErrorCount + 1
+					}
+				}
 			}
 		}
 		// drain channel
 		for i := 0; i < len(errorChan); i++ {
 			err := <-errorChan
-			errors = append(errors, err)
+			errors = append(errors, err.err)
 		}
 		errorCount := len(errors)
 		fmt.Println("\nTotal Errors: " + strconv.Itoa(errorCount))
 		errorCounts := findMostCommonErrors(errors)
+		writeErrorPercentage := (float64(writeErrorCount) / float64(writeErrorCount+readErrorCount)) * 100
+		readErrorPercentage := (float64(readErrorCount) / float64(writeErrorCount+readErrorCount)) * 100
+		fmt.Printf("\nError distribution: Writes %5.3f%%, Reads %5.3f%% \n", writeErrorPercentage, readErrorPercentage)
 		for key, value := range errorCounts {
 			fmt.Println("Error: \"" + key + "\" Count: " + strconv.Itoa(value))
 		}
@@ -165,8 +182,8 @@ func main() {
 		go func() {
 			time.Sleep(time.Duration(randomRange(0, 30)) * time.Millisecond)
 			item := &memcache.Item{Key: randSeq(KEY_SIZE), Value: []byte("1")}
-			timeTrack(writeReportChan, errorChan, func() error {
-				return mc.Set(item)
+			timeTrack(writeReportChan, errorChan, func() WatchedErr {
+				return WatchedErr{err: mc.Set(item), opType: 0}
 			})
 			ioWG.Done()
 		}()
@@ -176,9 +193,9 @@ func main() {
 		go func() {
 			time.Sleep(time.Duration(randomRange(0, 30)) * time.Millisecond)
 			key := startingData[randomRange(0, len(startingData))]
-			timeTrack(readReportChan, errorChan, func() error {
-				_, err := mc.Get(key)
-				return err
+			timeTrack(readReportChan, errorChan, func() WatchedErr {
+				_, result := mc.Get(key)
+				return WatchedErr{err: result, opType: 1}
 			})
 			ioWG.Done()
 		}()
@@ -202,11 +219,11 @@ func randomRange(min, max int) int {
 	return rand.Intn(max-min) + min
 }
 
-func timeTrack(reportChan chan time.Duration, errorChan chan error, doFunc func() error) {
+func timeTrack(reportChan chan time.Duration, errorChan chan WatchedErr, doFunc func() WatchedErr) {
 	start := time.Now()
 	err := doFunc()
 	elapsed := time.Since(start)
-	if err != nil {
+	if err.err != nil {
 		errorChan <- err
 	} else {
 		reportChan <- elapsed
