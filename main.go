@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"hash/crc32"
+	"io"
 	"log"
 	"math"
 	"math/rand"
@@ -38,6 +39,16 @@ func (sm *ShardedMemcached) Set(i *memcache.Item) error {
 
 func (sm *ShardedMemcached) Get(key string) (*memcache.Item, error) {
 	return sm.getShard(key).Get(key)
+}
+
+func (sm *ShardedMemcached) FlushAll() error {
+	for _, each := range sm.servers {
+		err := each.FlushAll()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 const (
@@ -80,10 +91,16 @@ func main() {
 		mc.Add(newClient)
 	}
 
+	err := mc.FlushAll()
+	if err != nil {
+		fmt.Println(err.Error())
+		log.Fatal("Failed to flush existing keys")
+	}
+
 	// Load starting data, report metrics on timing
 	// (essentially a sequential write benchmark)
 	startingDataStart := time.Now()
-	err := writeStartingData(mc, startingData)
+	err = writeStartingData(mc, startingData)
 	startingDataElapsed := time.Since(startingDataStart)
 
 	if err != nil {
@@ -224,7 +241,11 @@ func timeTrack(reportChan chan time.Duration, errorChan chan WatchedErr, doFunc 
 	err := doFunc()
 	elapsed := time.Since(start)
 	if err.err != nil {
-		errorChan <- err
+		if err.err == (io.EOF) {
+			timeTrack(reportChan, errorChan, doFunc)
+		} else {
+			errorChan <- err
+		}
 	} else {
 		reportChan <- elapsed
 	}
