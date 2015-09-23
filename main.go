@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"hash/crc32"
 	"io"
 	"log"
 	"math"
@@ -21,38 +20,9 @@ type WatchedErr struct {
 	opType int
 }
 
-type ShardedMemcached struct {
-	servers []*memcache.Client
-}
-
-func (sm *ShardedMemcached) Add(c *memcache.Client) {
-	sm.servers = append(sm.servers, c)
-}
-
-func (sm *ShardedMemcached) getShard(key string) *memcache.Client {
-	return sm.servers[crc32.ChecksumIEEE([]byte(key))%uint32(len(sm.servers))]
-}
-
-func (sm *ShardedMemcached) Set(i *memcache.Item) error {
-	return sm.getShard(i.Key).Set(i)
-}
-
-func (sm *ShardedMemcached) Get(key string) (*memcache.Item, error) {
-	return sm.getShard(key).Get(key)
-}
-
-func (sm *ShardedMemcached) FlushAll() error {
-	for _, each := range sm.servers {
-		err := each.FlushAll()
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 const (
 	KEY_SIZE = 64
+	VAL_SIZE = 12
 )
 
 var letters = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
@@ -62,6 +32,7 @@ func main() {
 	factor := flag.Float64("factor", 1000, "volumizing factor")
 	storeURIstring := flag.String("store", "localhost:11211,localhost:5000", "store host URIs separated by comma")
 	startingRecordSize := flag.Int64("start", 10000, "starting record size")
+	numClients := flag.Int64("clients", 80, "amount of logical clients to emulate")
 
 	flag.Parse()
 
@@ -84,18 +55,15 @@ func main() {
 
 	// Build sharded memcached struct
 	shards := strings.Split(*storeURIstring, ",")
-	mc := &ShardedMemcached{}
-	for _, each := range shards {
-		newClient := memcache.New(each)
-		newClient.Timeout = time.Second * 5
-		mc.Add(newClient)
-	}
+	store := NewShardedMemcachedKVS(shards)
 
-	err := mc.FlushAll()
+	err := store.Flush()
 	if err != nil {
 		fmt.Println(err.Error())
 		log.Fatal("Failed to flush existing keys")
 	}
+
+	emulatedNodes := NewLogicalCluster(*numClients, store, reportChan, errorChan, &ioWG)
 
 	// Load starting data, report metrics on timing
 	// (essentially a sequential write benchmark)
@@ -195,28 +163,8 @@ func main() {
 		reportingWG.Done()
 	}()
 
-	for i := 0; float64(i) < numWrites; i++ {
-		go func() {
-			time.Sleep(time.Duration(randomRange(0, 30)) * time.Millisecond)
-			item := &memcache.Item{Key: randSeq(KEY_SIZE), Value: []byte("1")}
-			timeTrack(writeReportChan, errorChan, func() WatchedErr {
-				return WatchedErr{err: mc.Set(item), opType: 0}
-			})
-			ioWG.Done()
-		}()
-	}
+	emulatedNodes.BlastAll(*factor, *ratio, startingData)
 
-	for i := 0; float64(i) < numReads; i++ {
-		go func() {
-			time.Sleep(time.Duration(randomRange(0, 30)) * time.Millisecond)
-			key := startingData[randomRange(0, len(startingData))]
-			timeTrack(readReportChan, errorChan, func() WatchedErr {
-				_, result := mc.Get(key)
-				return WatchedErr{err: result, opType: 1}
-			})
-			ioWG.Done()
-		}()
-	}
 	ioWG.Wait() // wait for our reads/writes to finish
 	reportSignal <- struct{}{}
 	reportSignal <- struct{}{}
