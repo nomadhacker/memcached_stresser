@@ -3,8 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"hash/crc32"
-	"io"
 	"log"
 	"math"
 	"math/rand"
@@ -12,8 +10,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/bradfitz/gomemcache/memcache"
 )
 
 type WatchedErr struct {
@@ -21,38 +17,9 @@ type WatchedErr struct {
 	opType int
 }
 
-type ShardedMemcached struct {
-	servers []*memcache.Client
-}
-
-func (sm *ShardedMemcached) Add(c *memcache.Client) {
-	sm.servers = append(sm.servers, c)
-}
-
-func (sm *ShardedMemcached) getShard(key string) *memcache.Client {
-	return sm.servers[crc32.ChecksumIEEE([]byte(key))%uint32(len(sm.servers))]
-}
-
-func (sm *ShardedMemcached) Set(i *memcache.Item) error {
-	return sm.getShard(i.Key).Set(i)
-}
-
-func (sm *ShardedMemcached) Get(key string) (*memcache.Item, error) {
-	return sm.getShard(key).Get(key)
-}
-
-func (sm *ShardedMemcached) FlushAll() error {
-	for _, each := range sm.servers {
-		err := each.FlushAll()
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 const (
 	KEY_SIZE = 64
+	VAL_SIZE = 12
 )
 
 var letters = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
@@ -62,19 +29,19 @@ func main() {
 	factor := flag.Float64("factor", 1000, "volumizing factor")
 	storeURIstring := flag.String("store", "localhost:11211,localhost:5000", "store host URIs separated by comma")
 	startingRecordSize := flag.Int64("start", 10000, "starting record size")
+	numClients := flag.Int64("clients", 80, "amount of logical clients to emulate")
+	flushFlag := flag.Bool("flush", false, "Flushes the database before testing")
+	redisFlag := flag.Bool("redis", false, "Use the sharded redis adapter")
+	mcFlag := flag.Bool("mc", false, "Use the sharded memcached adapter")
 
 	flag.Parse()
 
 	rand.Seed(time.Now().Unix())
 
-	numWrites := *factor * *ratio // writes is always lower
-	numReads := *factor
-
 	startingData := genStartingData(*startingRecordSize)
 
 	var ioWG sync.WaitGroup
 	var reportingWG sync.WaitGroup
-	ioWG.Add(int(numReads + numWrites)) // set it here so we guarantee no race conditions
 
 	writeReportChan := make(chan time.Duration, 999)
 	readReportChan := make(chan time.Duration, 999)
@@ -84,23 +51,33 @@ func main() {
 
 	// Build sharded memcached struct
 	shards := strings.Split(*storeURIstring, ",")
-	mc := &ShardedMemcached{}
-	for _, each := range shards {
-		newClient := memcache.New(each)
-		newClient.Timeout = time.Second * 5
-		mc.Add(newClient)
+	var store KeyValueStore
+
+	if *redisFlag && *mcFlag {
+		log.Fatal("Cannot pass both redis and memcached adapter flags")
+	} else if *redisFlag && !*mcFlag {
+		store = NewShardedRedisKVS(shards)
+	} else if !*redisFlag && *mcFlag {
+		store = NewShardedMemcachedKVS(shards)
+	} else {
+		log.Fatal("Must pass an adapter flag (\"--redis\" or \"--mc\"")
 	}
 
-	err := mc.FlushAll()
-	if err != nil {
-		fmt.Println(err.Error())
-		log.Fatal("Failed to flush existing keys")
+	if *flushFlag {
+		err := store.Flush()
+		if err != nil {
+			fmt.Println(err.Error())
+			log.Fatal("Failed to flush existing keys")
+		}
 	}
+
+	reportChans := ReportingChans{write: writeReportChan, read: readReportChan}
+	emulatedNodes := NewLogicalCluster(int(*numClients), store, reportChans, errorChan, &ioWG)
 
 	// Load starting data, report metrics on timing
 	// (essentially a sequential write benchmark)
 	startingDataStart := time.Now()
-	err = writeStartingData(mc, startingData)
+	err := writeStartingData(store, startingData)
 	startingDataElapsed := time.Since(startingDataStart)
 
 	if err != nil {
@@ -195,28 +172,8 @@ func main() {
 		reportingWG.Done()
 	}()
 
-	for i := 0; float64(i) < numWrites; i++ {
-		go func() {
-			time.Sleep(time.Duration(randomRange(0, 30)) * time.Millisecond)
-			item := &memcache.Item{Key: randSeq(KEY_SIZE), Value: []byte("1")}
-			timeTrack(writeReportChan, errorChan, func() WatchedErr {
-				return WatchedErr{err: mc.Set(item), opType: 0}
-			})
-			ioWG.Done()
-		}()
-	}
+	emulatedNodes.BlastAll(int(*factor), *ratio, startingData)
 
-	for i := 0; float64(i) < numReads; i++ {
-		go func() {
-			time.Sleep(time.Duration(randomRange(0, 30)) * time.Millisecond)
-			key := startingData[randomRange(0, len(startingData))]
-			timeTrack(readReportChan, errorChan, func() WatchedErr {
-				_, result := mc.Get(key)
-				return WatchedErr{err: result, opType: 1}
-			})
-			ioWG.Done()
-		}()
-	}
 	ioWG.Wait() // wait for our reads/writes to finish
 	reportSignal <- struct{}{}
 	reportSignal <- struct{}{}
@@ -241,11 +198,12 @@ func timeTrack(reportChan chan time.Duration, errorChan chan WatchedErr, doFunc 
 	err := doFunc()
 	elapsed := time.Since(start)
 	if err.err != nil {
-		if err.err == (io.EOF) {
-			timeTrack(reportChan, errorChan, doFunc)
-		} else {
-			errorChan <- err
-		}
+		// if err.err == (io.EOF) {
+		// 	timeTrack(reportChan, errorChan, doFunc)
+		// } else {
+		// 	errorChan <- err
+		// }
+		errorChan <- err
 	} else {
 		reportChan <- elapsed
 	}
@@ -269,9 +227,9 @@ func genStartingData(numRecords int64) []string {
 	return testData
 }
 
-func writeStartingData(mc *ShardedMemcached, data []string) error {
+func writeStartingData(store KeyValueStore, data []string) error {
 	for _, hash := range data {
-		err := mc.Set(&memcache.Item{Key: hash, Value: []byte("1")})
+		err := store.Set(hash, "asdf")
 		if err != nil {
 			return err
 		}
