@@ -24,6 +24,7 @@ func NewShardedMemcachedKVS(shards []string) KeyValueStore {
 		newClient.Timeout = time.Second * 5
 		mc.Add(newClient)
 	}
+	return mc
 }
 
 func (sm *ShardedMemcached) Add(c *memcache.Client) {
@@ -40,7 +41,8 @@ func (sm *ShardedMemcached) Set(key, value string) error {
 }
 
 func (sm *ShardedMemcached) Get(key string) (string, error) {
-	return string(sm.getShard(key).Get(key).Value)
+	result, err := sm.getShard(key).Get(key)
+	return string(result.Value), err
 }
 
 func (sm *ShardedMemcached) Flush() error {
@@ -65,7 +67,7 @@ type MemcachedItem struct {
 }
 
 func NewMemcachedItem(key, value string) *MemcachedItem {
-	return &memcache.Item{mcitem: &memcache.Item{Key: key, Value: []byte(value)}}
+	return &MemcachedItem{mcitem: &memcache.Item{Key: key, Value: []byte(value)}}
 }
 
 func (mi *MemcachedItem) SetKey(key string) error {
@@ -78,11 +80,11 @@ func (mi *MemcachedItem) SetValue(value string) error {
 	return nil
 }
 
-func (mi *MemcachedItem) GetKey(key string) error {
+func (mi *MemcachedItem) GetKey() string {
 	return mi.mcitem.Key
 }
 
-func (mi *MemcachedItem) GetValue(value string) error {
+func (mi *MemcachedItem) GetValue() string {
 	return string(mi.mcitem.Value)
 }
 
@@ -105,10 +107,10 @@ func (ri *RedisItem) SetValue(value string) error {
 	return nil
 }
 
-func (ri *RedisItem) GetKey(key string) error {
+func (ri *RedisItem) GetKey() string {
 	return ri.Key
 }
 
-func (ri *RedisItem) GetValue(value string) error {
+func (ri *RedisItem) GetValue() string {
 	return ri.Value
 }

@@ -6,15 +6,15 @@ import (
 )
 
 type LogicalClient struct {
-	store      KeyValueStore
-	reportChan chan time.Duration
-	errorChan  chan WatchedErr
-	ioWG       *sync.WaitGroup
+	store       KeyValueStore
+	reportChans ReportingChans
+	errorChan   chan WatchedErr
+	ioWG        *sync.WaitGroup
 }
 
-func NewLogicalClient(store KeyValueStore, reportChan chan time.Duration,
+func NewLogicalClient(store KeyValueStore, reportChans ReportingChans,
 	errorChan chan WatchedErr, ioWG *sync.WaitGroup) *LogicalClient {
-	return &LogicalClient{store: store, reportChan: reportChan, errorChan: errorChan, ioWG: ioWG}
+	return &LogicalClient{store: store, reportChans: reportChans, errorChan: errorChan, ioWG: ioWG}
 }
 
 func (lc *LogicalClient) Blast(depth int, ratio float64, existingData []string) {
@@ -28,8 +28,8 @@ func (lc *LogicalClient) Blast(depth int, ratio float64, existingData []string) 
 		for i := 0; float64(i) < numWrites; i++ {
 			time.Sleep(time.Duration(randomRange(0, 30)) * time.Millisecond)
 			key := randSeq(KEY_SIZE)
-			timeTrack(lc.reportChan, lc.errorChan, func() WatchedErr {
-				return WatchedErr{err: ls.store.Set(key, "value"), opType: 0}
+			timeTrack(lc.reportChans.write, lc.errorChan, func() WatchedErr {
+				return WatchedErr{err: lc.store.Set(key, "value"), opType: 0}
 			})
 		}
 		lc.ioWG.Done()
@@ -39,9 +39,9 @@ func (lc *LogicalClient) Blast(depth int, ratio float64, existingData []string) 
 	go func() {
 		for i := 0; float64(i) < numReads; i++ {
 			time.Sleep(time.Duration(randomRange(0, 30)) * time.Millisecond)
-			key := existingData[randomRange(0, len(startingData))]
-			timeTrack(lc.reportChan, lc.errorChan, func() WatchedErr {
-				_, err := ls.store.Get(key)
+			key := existingData[randomRange(0, len(existingData))]
+			timeTrack(lc.reportChans.read, lc.errorChan, func() WatchedErr {
+				_, err := lc.store.Get(key)
 				return WatchedErr{err: err, opType: 1}
 			})
 		}

@@ -9,12 +9,17 @@ type LogicalClientCluster struct {
 	clients []*LogicalClient
 }
 
-func NewLogicalCluster(numClients int, store KeyValueStore, reportChan chan time.Duration,
+type ReportingChans struct {
+	read  chan time.Duration
+	write chan time.Duration
+}
+
+func NewLogicalCluster(numClients int, store KeyValueStore, reportChans ReportingChans,
 	errorChan chan WatchedErr, ioWG *sync.WaitGroup) *LogicalClientCluster {
 
 	lc := &LogicalClientCluster{}
 	for i := 0; i < numClients; i++ {
-		lc.clients = append(lc.clients, NewLogicalClient(store, reportChan, errorChan, ioWG))
+		lc.clients = append(lc.clients, NewLogicalClient(store, reportChans, errorChan, ioWG))
 	}
 
 	return lc

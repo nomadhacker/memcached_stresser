@@ -11,8 +11,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/bradfitz/gomemcache/memcache"
 )
 
 type WatchedErr struct {
@@ -63,12 +61,14 @@ func main() {
 		log.Fatal("Failed to flush existing keys")
 	}
 
-	emulatedNodes := NewLogicalCluster(*numClients, store, reportChan, errorChan, &ioWG)
+	reportChans := ReportingChans{write: writeReportChan, read: readReportChan}
+
+	emulatedNodes := NewLogicalCluster(int(*numClients), store, reportChans, errorChan, &ioWG)
 
 	// Load starting data, report metrics on timing
 	// (essentially a sequential write benchmark)
 	startingDataStart := time.Now()
-	err = writeStartingData(mc, startingData)
+	err = writeStartingData(store, startingData)
 	startingDataElapsed := time.Since(startingDataStart)
 
 	if err != nil {
@@ -163,7 +163,7 @@ func main() {
 		reportingWG.Done()
 	}()
 
-	emulatedNodes.BlastAll(*factor, *ratio, startingData)
+	emulatedNodes.BlastAll(int(*factor), *ratio, startingData)
 
 	ioWG.Wait() // wait for our reads/writes to finish
 	reportSignal <- struct{}{}
@@ -217,9 +217,9 @@ func genStartingData(numRecords int64) []string {
 	return testData
 }
 
-func writeStartingData(mc *ShardedMemcached, data []string) error {
+func writeStartingData(store KeyValueStore, data []string) error {
 	for _, hash := range data {
-		err := mc.Set(&memcache.Item{Key: hash, Value: []byte("1")})
+		err := store.Set(hash, "asdf")
 		if err != nil {
 			return err
 		}
