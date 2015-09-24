@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"math"
 	"math/rand"
@@ -199,11 +198,12 @@ func timeTrack(reportChan chan time.Duration, errorChan chan WatchedErr, doFunc 
 	err := doFunc()
 	elapsed := time.Since(start)
 	if err.err != nil {
-		if err.err == (io.EOF) {
-			timeTrack(reportChan, errorChan, doFunc)
-		} else {
-			errorChan <- err
-		}
+		// if err.err == (io.EOF) {
+		// 	timeTrack(reportChan, errorChan, doFunc)
+		// } else {
+		// 	errorChan <- err
+		// }
+		errorChan <- err
 	} else {
 		reportChan <- elapsed
 	}

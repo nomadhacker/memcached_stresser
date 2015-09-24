@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"hash/crc32"
 	"time"
 
@@ -42,8 +43,17 @@ func (sm *ShardedMemcached) Set(key, value string) error {
 }
 
 func (sm *ShardedMemcached) Get(key string) (string, error) {
+	var stringResult string
+	var err error
+	defer func() {
+		if r := recover(); r != nil {
+			stringResult = ""
+			err = errors.New("Connection dereference")
+		}
+	}()
 	result, err := sm.getShard(key).Get(key)
-	return string(result.Value), err
+	stringResult = string(result.Value)
+	return stringResult, err
 }
 
 func (sm *ShardedMemcached) Flush() error {
@@ -148,30 +158,3 @@ func (mi *MemcachedItem) GetKey() string {
 func (mi *MemcachedItem) GetValue() string {
 	return string(mi.mcitem.Value)
 }
-
-// type RedisItem struct {
-// 	Key   string
-// 	Value string
-// }
-
-// func NewRedisItem(key, value string) *RedisItem {
-// 	return &RedisItem{Key: key, Value: value}
-// }
-
-// func (ri *RedisItem) SetKey(key string) error {
-// 	ri.Key = key
-// 	return nil
-// }
-
-// func (ri *RedisItem) SetValue(value string) error {
-// 	ri.Value = value
-// 	return nil
-// }
-
-// func (ri *RedisItem) GetKey() string {
-// 	return ri.Key
-// }
-
-// func (ri *RedisItem) GetValue() string {
-// 	return ri.Value
-// }
