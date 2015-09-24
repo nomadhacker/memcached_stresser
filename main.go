@@ -31,7 +31,7 @@ func main() {
 	storeURIstring := flag.String("store", "localhost:11211,localhost:5000", "store host URIs separated by comma")
 	startingRecordSize := flag.Int64("start", 10000, "starting record size")
 	numClients := flag.Int64("clients", 80, "amount of logical clients to emulate")
-	flushFlag := flag.Bool("flush", true, "Flushes the database before testing")
+	flushFlag := flag.Bool("flush", false, "Flushes the database before testing")
 	redisFlag := flag.Bool("redis", false, "Use the sharded redis adapter")
 	mcFlag := flag.Bool("mc", false, "Use the sharded memcached adapter")
 
