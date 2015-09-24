@@ -31,6 +31,9 @@ func main() {
 	storeURIstring := flag.String("store", "localhost:11211,localhost:5000", "store host URIs separated by comma")
 	startingRecordSize := flag.Int64("start", 10000, "starting record size")
 	numClients := flag.Int64("clients", 80, "amount of logical clients to emulate")
+	flushFlag := flag.Bool("flush", true, "Flushes the database before testing")
+	redisFlag := flag.Bool("redis", false, "Use the sharded redis adapter")
+	mcFlag := flag.Bool("mc", false, "Use the sharded memcached adapter")
 
 	flag.Parse()
 
@@ -49,12 +52,24 @@ func main() {
 
 	// Build sharded memcached struct
 	shards := strings.Split(*storeURIstring, ",")
-	store := NewShardedMemcachedKVS(shards)
+	var store KeyValueStore
 
-	err := store.Flush()
-	if err != nil {
-		fmt.Println(err.Error())
-		log.Fatal("Failed to flush existing keys")
+	if *redisFlag && *mcFlag {
+		log.Fatal("Cannot pass both redis and memcached adapter flags")
+	} else if *redisFlag && !*mcFlag {
+		store = NewShardedRedisKVS(shards)
+	} else if !*redisFlag && *mcFlag {
+		store := NewShardedMemcachedKVS(shards)
+	} else {
+		log.Fatal("Must pass an adapter flag (\"--redis\" or \"--mc\"")
+	}
+
+	if *flushFlag {
+		err := store.Flush()
+		if err != nil {
+			fmt.Println(err.Error())
+			log.Fatal("Failed to flush existing keys")
+		}
 	}
 
 	reportChans := ReportingChans{write: writeReportChan, read: readReportChan}
