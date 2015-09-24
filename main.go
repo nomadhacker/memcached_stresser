@@ -59,7 +59,7 @@ func main() {
 	} else if *redisFlag && !*mcFlag {
 		store = NewShardedRedisKVS(shards)
 	} else if !*redisFlag && *mcFlag {
-		store := NewShardedMemcachedKVS(shards)
+		store = NewShardedMemcachedKVS(shards)
 	} else {
 		log.Fatal("Must pass an adapter flag (\"--redis\" or \"--mc\"")
 	}
@@ -78,7 +78,7 @@ func main() {
 	// Load starting data, report metrics on timing
 	// (essentially a sequential write benchmark)
 	startingDataStart := time.Now()
-	err = writeStartingData(store, startingData)
+	err := writeStartingData(store, startingData)
 	startingDataElapsed := time.Since(startingDataStart)
 
 	if err != nil {

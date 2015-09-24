@@ -57,19 +57,19 @@ func (sm *ShardedMemcached) Flush() error {
 }
 
 type RedisKVS struct {
-	*redis.Client
+	cl *redis.Client
 }
 
 func (r *RedisKVS) Set(key, value string) error {
-	return r.Set(key, value, 0).Err()
+	return r.cl.Set(key, value, 0).Err()
 }
 
 func (r *RedisKVS) Get(key string) (string, error) {
-	return r.Get(key).Result()
+	return r.cl.Get(key).Result()
 }
 
 func (r *RedisKVS) Flush() error {
-	return r.FlushAll().Err()
+	return r.cl.FlushAll().Err()
 }
 
 type ShardedRedisKVS struct {
@@ -90,10 +90,11 @@ func NewShardedRedisKVS(shards []string) KeyValueStore {
 }
 
 func (sr *ShardedRedisKVS) Add(c *redis.Client) {
-	sr.servers = append(sr.servers, c)
+	rc := &RedisKVS{cl: c}
+	sr.servers = append(sr.servers, rc)
 }
 
-func (sr *ShardedRedisKVS) getShard(key string) *redis.Client {
+func (sr *ShardedRedisKVS) getShard(key string) *RedisKVS {
 	return sr.servers[crc32.ChecksumIEEE([]byte(key))%uint32(len(sr.servers))]
 }
 
