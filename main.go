@@ -36,14 +36,10 @@ func main() {
 
 	rand.Seed(time.Now().Unix())
 
-	numWrites := *factor * *ratio // writes is always lower
-	numReads := *factor
-
 	startingData := genStartingData(*startingRecordSize)
 
 	var ioWG sync.WaitGroup
 	var reportingWG sync.WaitGroup
-	ioWG.Add(int(numReads + numWrites)) // set it here so we guarantee no race conditions
 
 	writeReportChan := make(chan time.Duration, 999)
 	readReportChan := make(chan time.Duration, 999)
@@ -62,7 +58,6 @@ func main() {
 	}
 
 	reportChans := ReportingChans{write: writeReportChan, read: readReportChan}
-
 	emulatedNodes := NewLogicalCluster(int(*numClients), store, reportChans, errorChan, &ioWG)
 
 	// Load starting data, report metrics on timing

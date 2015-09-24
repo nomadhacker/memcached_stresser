@@ -28,11 +28,11 @@ func (lc *LogicalClient) Blast(depth int, ratio float64, existingData []string) 
 		for i := 0; float64(i) < numWrites; i++ {
 			time.Sleep(time.Duration(randomRange(0, 30)) * time.Millisecond)
 			key := randSeq(KEY_SIZE)
-			timeTrack(lc.reportChans.write, lc.errorChan, func() WatchedErr {
+			go timeTrack(lc.reportChans.write, lc.errorChan, func() WatchedErr {
+				defer lc.ioWG.Done()
 				return WatchedErr{err: lc.store.Set(key, "value"), opType: 0}
 			})
 		}
-		lc.ioWG.Done()
 	}()
 
 	// reads
@@ -40,11 +40,12 @@ func (lc *LogicalClient) Blast(depth int, ratio float64, existingData []string) 
 		for i := 0; float64(i) < numReads; i++ {
 			time.Sleep(time.Duration(randomRange(0, 30)) * time.Millisecond)
 			key := existingData[randomRange(0, len(existingData))]
-			timeTrack(lc.reportChans.read, lc.errorChan, func() WatchedErr {
+			go timeTrack(lc.reportChans.read, lc.errorChan, func() WatchedErr {
+				defer lc.ioWG.Done()
 				_, err := lc.store.Get(key)
 				return WatchedErr{err: err, opType: 1}
 			})
 		}
-		lc.ioWG.Done()
+
 	}()
 }
