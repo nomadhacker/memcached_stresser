@@ -56,7 +56,7 @@ func main() {
 	if *redisFlag && *mcFlag {
 		log.Fatal("Cannot pass both redis and memcached adapter flags")
 	} else if *redisFlag && !*mcFlag {
-		store = NewShardedRedisKVS(shards)
+		store = NewShardedRedisKVS(shards, int(*numClients))
 	} else if !*redisFlag && *mcFlag {
 		store = NewShardedMemcachedKVS(shards)
 	} else {

@@ -86,13 +86,15 @@ type ShardedRedisKVS struct {
 	servers []*RedisKVS
 }
 
-func NewShardedRedisKVS(shards []string) KeyValueStore {
+func NewShardedRedisKVS(shards []string, poolSize int) KeyValueStore {
 	rc := &ShardedRedisKVS{}
 	for _, each := range shards {
 		newClient := redis.NewClient(&redis.Options{
-			Addr:     each,
-			Password: "", // no password set
-			DB:       0,  // use default DB
+			Addr:        each,
+			Password:    "", // no password set
+			DB:          0,  // use default DB
+			PoolSize:    poolSize,
+			PoolTimeout: 10 * time.Second,
 		})
 		rc.Add(newClient)
 	}
